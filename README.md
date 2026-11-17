@@ -1,41 +1,103 @@
-# THK-AI Kooperationsgraph (ohne Cloud-API)
+# THK-AI Kooperationsgraph
 
-Crawlt die Mitgliederseite des THK-AI Forschungsclusters, liest die Personenseiten, baut daraus einen Graphen
-und zeigt ihn unter http://localhost:8000. Ein Hintergrunddienst hält die Daten täglich aktuell.
+**Wer forscht mit wem?** Ein interaktiver Graph der Zusammenarbeit im KI-Forschungscluster
+[THK-AI](https://blogs.gm.fh-koeln.de/thk-ai/mitglieder/) der TH Köln. Er wird automatisch aus den öffentlichen
+Profilseiten der Mitglieder erzeugt und täglich aktualisiert.
 
-## Einrichtung (einmalig)
-1. `python -m pip install -r requirements.txt`
-2. Modell trainieren (liegt nicht im Projekt, ca. 15 Min.): in `training/`  `python fake_data.py --n-train 3000 --n-val 200 --n-test 200`
-   und `python train_tagger.py --epochs 5 --batch 16` (ca. 15 Min.) → erzeugt `training/checkpoints/tagger.pt`. Ohne diese
-   Datei läuft alles, aber nur mit den modellfreien Teilen (Mitglieder, Namen).
-3. Einmal von Hand testen: `python src/pipeline.py`
-4. Autostart einrichten (Windows): `python src/updater.py --install-autostart`
-   (Entfernen: `--uninstall-autostart`). Log: `data/updater.log`
+🔗 **Live:** https://theparasite99.github.io/wasp-ki-cluster-graph/
 
-## Wer macht was
-| Schritt | Quelle |
-|---|---|
-| Mitglieder, Namen | direkt aus dem HTML (Linktext / Überschrift), kein Modell |
-| Rolle, Fakultät, Schwerpunkte, Publikationen, Projekte, Beteiligte | Tagger, **nur übernommen, wenn der Text auf der Seite wörtlich vorkommt** |
-| Kanten zwischen Personen | aus gemeinsamen Projekten/Publikationen (`build_graph.py`) |
+## Was der Graph zeigt
+- **Personen:** Cluster-Mitglieder und externe Personen, die als Mitautorinnen und Mitautoren oder als
+  Projektbeteiligte genannt werden. Angezeigt werden auch Rolle, Fakultät und Forschungsschwerpunkte, soweit sie auf
+  den Seiten stehen.
+- **Projekte** und **Publikationen** mit Jahr, Erscheinungsort und Link (DOI, wenn vorhanden). Für Publikationen ohne
+  Link gibt es eine Suche bei Google Scholar.
+- **Verbindungen:** Zwei Personen sind verbunden, wenn sie gemeinsam an einem Projekt oder einer Publikation
+  beteiligt sind. Ein Klick auf eine Linie zeigt die gemeinsamen Arbeiten.
 
-## Täglicher Ablauf (`src/updater.py`)
-Beim Start und alle 30 Min. Prüfung: letzter Erfolg ≥ 24 h her → `pipeline.py`. Nur geänderte Seiten (Hash in
-`data/state.json`) werden neu extrahiert; ausgetretene Personen werden entfernt; bei Fehlern bleibt die alte
-`web/data/graph.json` bestehen. War der Rechner aus, wird beim nächsten Start nachgeholt.
+Die Oberfläche hat drei Ansichten (Personen-Netz, Projekte, Publikationen), eine Suche und zwei Filter: nur
+Cluster-Mitglieder anzeigen und Personen ohne Verbindungen ein- oder ausblenden.
 
-## Wichtig: Qualität
-Auf den zwei echten TH-Beispielseiten stimmt der Tagger mit dem Regel-Parser fast vollständig überein (Name, Fakultät, Rolle,
-Publikationen, Jahre 1,00; Autoren 0,98). Das sind nur zwei Seiten: Vor einer Aussage in der Arbeit alle gecrawlten Seiten
-mit `training/prelabel_real.py` etikettieren und den Tagger darauf testen (`training/README_TRAINING.md`).
-Der Tagger ist auf das TH-Layout spezialisiert; ändert die TH ihr Seitenformat, muss neu trainiert werden.
-Projekte werden bewusst nicht ausgegeben (`INCLUDE_PROJECTS` in `src/extract.py`): die Personenseiten haben keinen Projekt-Abschnitt.
+## So entsteht der Graph
+```
+Mitgliederseite ──► Personenseiten ──► Extraktion ──► Zusammenführen ──► graph.json ──► Webseite
+   (crawl.py)         (crawl.py)       (extract.py)   (build_graph.py)                  (web/)
+```
 
-## Online-Version (GitHub Pages)
-https://theparasite99.github.io/wasp-ki-cluster-graph/ wird von `.github/workflows/pages.yml` aktuell gehalten: Die Action
-crawlt täglich um 04:17 UTC (in Deutschland 05:17 bzw. 06:17 Uhr) und zusätzlich bei jedem Push auf `main`, der `src/`,
-`web/` oder das Modell ändert. Danach baut sie den Graphen neu und veröffentlicht `web/`. Von Hand startet man sie unter
-*Actions → Crawl and deploy website → Run workflow* (Häkchen „Alle Seiten neu extrahieren“ für einen kompletten Neulauf).
-Dafür liegt das Modell `training/checkpoints/tagger.pt` im Repo; nach neuem Training einfach diese Datei committen.
-Schlägt das Crawlen fehl, bleibt die bisherige Online-Version stehen. `web/data/graph.json` im Repo ist nur der Startwert
-und muss nicht mehr von Hand aktualisiert werden.
+1. **Crawlen** (`src/crawl.py`): Der Crawler liest die Mitgliederliste und lädt alle verlinkten Personenseiten.
+   `robots.txt` wird beachtet, zwischen zwei Seiten liegt eine Sekunde Pause. Er merkt sich für jede Seite einen Hash,
+   damit später nur geänderte Seiten neu verarbeitet werden. Personen, die nicht mehr verlinkt sind, werden entfernt.
+2. **Extrahieren** (`src/extract.py`):
+
+   | Angabe | Verfahren |
+   |---|---|
+   | Mitglieder und Namen | direkt aus dem HTML (Linktext, Seitenüberschrift), ohne Modell |
+   | Projekte | ohne Modell aus dem Abschnitt „Projekte / Kooperationen“ (Name, Beschreibung, Link) |
+   | Rolle, Fakultät, Schwerpunkte, Publikationen (Titel, Autoren, Jahr, Ort) | selbst trainierter Wort-Tagger (`training/`) |
+   | Links zu Publikationen | ohne Modell aus dem jeweiligen Listeneintrag, DOI bevorzugt |
+
+   Der Tagger markiert nur Wörter, die auf der Seite stehen, und erzeugt keinen eigenen Text. Jede Angabe ist daher
+   ein wörtlicher Ausschnitt der Quelle, erfundene Namen oder Titel kann es nicht geben. Der Tagger läuft lokal auf
+   der CPU, eine Cloud-API wird nicht genutzt.
+3. **Zusammenführen** (`src/build_graph.py`):
+   - Akademische Titel werden entfernt, und Namensvarianten werden zu einer Person zusammengeführt (zum Beispiel
+     „A. Muster“ und „Anna Muster“). Bei mehrdeutigen Initialen wird nicht geraten.
+   - Dasselbe Projekt oder dieselbe Publikation auf mehreren Seiten wird auch bei Tippfehlern, anderer Schreibweise
+     oder Abkürzung erkannt.
+   - Personen, die in einer Projektbeschreibung mit vollem Namen genannt werden, gelten als beteiligt.
+   - Arbeiten mit mehr als 15 Beteiligten erzeugen keine paarweisen Verbindungen.
+4. **Veröffentlichen:** Das Ergebnis ist `web/data/graph.json`. Die Webseite (`web/`, [Cytoscape.js](https://js.cytoscape.org/))
+   ist rein statisch und lädt nur diese Datei.
+
+## Automatische Aktualisierung
+Der Workflow `.github/workflows/pages.yml` führt die ganze Kette in GitHub Actions aus und veröffentlicht das Ergebnis
+auf GitHub Pages:
+
+- **Wann:** täglich um 04:17 UTC, bei jedem Push auf `main`, der `src/`, `web/` oder das Modell ändert, und von Hand
+  unter *Actions → Crawl and deploy website → Run workflow*.
+- **Zwischenspeicher:** Crawl-Daten und der zuletzt gebaute Graph liegen im Actions-Cache. Dadurch werden nur
+  geänderte Seiten neu extrahiert, und eine Seite, die vorübergehend nicht lädt, behält ihre bisherigen Daten.
+- **Bei Fehlern:** Schlägt das Crawlen fehl oder enthält der Graph keine Mitglieder bzw. Publikationen, wird nichts
+  veröffentlicht. Die bisherige Version bleibt online.
+
+`web/data/graph.json` im Repository ist nur ein Startwert und muss nicht von Hand gepflegt werden.
+
+## Lokal ausführen
+Voraussetzung ist Python 3.10 oder neuer.
+
+```bash
+python -m pip install -r requirements.txt
+python src/pipeline.py            # crawlen, extrahieren, graph.json bauen (nur Änderungen)
+python src/pipeline.py --force    # alle Seiten neu laden und extrahieren
+python src/updater.py             # Graph unter http://localhost:8000 anzeigen und täglich aktualisieren
+```
+
+`src/updater.py` ist ein kleiner Hintergrunddienst. Er prüft alle 30 Minuten, ob der letzte erfolgreiche Lauf
+24 Stunden zurückliegt, holt verpasste Läufe nach dem Hochfahren nach und schreibt ein Protokoll nach
+`data/updater.log`. Unter Windows lässt er sich mit `--install-autostart` bei der Anmeldung starten
+(`--uninstall-autostart` entfernt das wieder). `--once` führt nur einen einzigen Lauf aus.
+
+Das trainierte Modell liegt unter `training/checkpoints/tagger.pt`. Fehlt es, läuft die Pipeline trotzdem, dann aber
+nur mit den modellfreien Teilen: Mitglieder, Namen und Projekte, ohne Publikationen.
+
+## Projektstruktur
+```
+src/          Pipeline: crawl.py, extract.py, build_graph.py, pipeline.py, updater.py, state.py
+web/          statische Webseite (index.html, app.js, style.css) und data/graph.json
+training/     Tagger-Modell: Trainingsdaten, Training, Auswertung (siehe training/README_TRAINING.md)
+data/         lokale Arbeitsdaten (Rohseiten, Extraktionen, Zustand). Nicht im Repository.
+.github/      GitHub-Actions-Workflows
+```
+
+## Qualität und Grenzen
+- **Messwerte:** In einer 5-fachen Kreuzvalidierung über alle 28 Personenseiten erkennt der Tagger
+  Publikationstitel mit einem F1-Wert von **0,95 ± 0,03**, Titel und Autoren zusammen mit 0,91. Einzelheiten und
+  weitere Messungen stehen in [`training/README_TRAINING.md`](training/README_TRAINING.md).
+- **Vergleichsdaten:** Die Vergleichsdaten stammen von einem regelbasierten Parser und sind nicht von Hand geprüft.
+- **Layout-Abhängigkeit:** Der Tagger ist auf das Seitenlayout der TH Köln spezialisiert. In einem fremden Layout
+  erkennt er keine Titel. Ändert die TH ihr Seitenformat, muss neu trainiert werden.
+- **Abgeleitete Verbindungen:** Eine Verbindung bedeutet nur, dass zwei Personen gemeinsam bei einem Projekt oder
+  einer Publikation genannt werden. Das ist eine automatisch abgeleitete Näherung, keine vollständige oder
+  geprüfte Darstellung der Zusammenarbeit.
+- **Datenquelle:** Alle Angaben stammen aus öffentlich zugänglichen Profilseiten. Was dort fehlt oder veraltet ist,
+  fehlt auch im Graphen.
