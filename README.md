@@ -30,3 +30,9 @@ Publikationen, Jahre 1,00; Autoren 0,98). Das sind nur zwei Seiten: Vor einer Au
 mit `training/prelabel_real.py` etikettieren und den Tagger darauf testen (`training/README_TRAINING.md`).
 Der Tagger ist auf das TH-Layout spezialisiert; ändert die TH ihr Seitenformat, muss neu trainiert werden.
 Projekte werden bewusst nicht ausgegeben (`INCLUDE_PROJECTS` in `src/extract.py`): die Personenseiten haben keinen Projekt-Abschnitt.
+
+## Online-Version (GitHub Pages)
+`.github/workflows/pages.yml` veröffentlicht bei jedem Push auf `main`, der `web/` ändert, den Ordner `web/` als statische
+Seite. Weil das Modell nicht im Repo liegt, wird `web/data/graph.json` lokal erzeugt und mitcommittet:
+`python src/pipeline.py`, dann `git add web/data/graph.json && git commit -m "Graph aktualisiert" && git push`.
+Einmalig nötig: unter *Settings → Pages* als Quelle „GitHub Actions“ wählen.

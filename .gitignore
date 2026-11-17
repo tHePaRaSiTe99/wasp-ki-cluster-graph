@@ -1,4 +1,5 @@
 data/
+!web/data/
 training/data/
 training/checkpoints/
 __pycache__/

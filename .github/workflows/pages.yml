@@ -1,0 +1,47 @@
+name: Deploy website to GitHub Pages
+
+# Veröffentlicht den Ordner web/ (inkl. web/data/graph.json) als statische Seite.
+# graph.json wird lokal von src/pipeline.py erzeugt (das Tagger-Modell liegt nicht im Repo)
+# und muss committet werden, damit die Online-Version aktuell ist.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check graph.json
+        run: python3 -c "import json; g=json.load(open('web/data/graph.json', encoding='utf-8')); print('graph.json ok')"
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
