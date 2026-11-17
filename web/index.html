@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>THK-AI Kooperationsgraph</title>
+  <link rel="icon" href="data:," />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <main class="stage">
+      <div id="cy"></div>
+    </main>
+
+    <header class="masthead">
+      <div class="eyebrow">TH Köln — KI-Forschungscluster</div>
+      <h1>Wer forscht<br /><em>mit wem?</em></h1>
+      <p class="lead">Ein lebender Atlas der Zusammenarbeit, automatisch aus den Profilseiten der Mitglieder erzeugt.</p>
+    </header>
+
+    <section class="numbers" aria-label="Kennzahlen der aktuellen Ansicht">
+      <div><b id="stat-members">–</b><span>Mitglieder</span></div>
+      <div><b id="stat-externals">–</b><span>Externe</span></div>
+      <div><b id="stat-projects">–</b><span>Projekte</span></div>
+      <div><b id="stat-edges">–</b><span>Verbindungen</span></div>
+      <div class="note" id="stats"></div>
+    </section>
+
+    <section class="searchbar">
+      <label class="sr" for="search">Suche</label>
+      <span class="search-icon" aria-hidden="true">⌕</span>
+      <input id="search" type="search" placeholder="Person oder Projekt finden …" autocomplete="off" />
+      <ul id="results" class="results" hidden></ul>
+      <div class="hint" id="hint"></div>
+    </section>
+
+    <nav class="dock">
+      <div class="views" id="view-seg" role="group" aria-label="Ansicht">
+        <button class="view active" data-view="people"><strong>Personen-Netz</strong><span>Nur Menschen</span></button>
+        <button class="view" data-view="projects"><strong>Mit Projekten</strong><span>Projekte als Knoten</span></button>
+      </div>
+      <div class="dock-sep"></div>
+      <label class="toggle"><input type="checkbox" id="opt-members" /> Nur Mitglieder</label>
+      <label class="toggle"><input type="checkbox" id="opt-isolated" /> Einzelne zeigen</label>
+      <div class="dock-sep"></div>
+      <div class="zoom" role="group" aria-label="Zoom">
+        <button id="zoom-in" aria-label="Vergrößern">+</button>
+        <button id="zoom-out" aria-label="Verkleinern">&minus;</button>
+        <button id="zoom-fit" aria-label="Alles anzeigen" title="Alles anzeigen">⤢</button>
+      </div>
+    </nav>
+
+    <section class="legend">
+      <div><span class="dot dot-member"></span> Cluster-Mitglied</div>
+      <div><span class="dot dot-external"></span> Externe Person</div>
+      <div><span class="dot dot-project"></span> Projekt / Publikation</div>
+      <div><span class="line line-coop"></span> Zusammenarbeit</div>
+      <p class="legend-tip">Linie anklicken → gemeinsame Veröffentlichungen</p>
+    </section>
+
+    <aside id="panel" class="panel hidden" aria-live="polite">
+      <button class="panel-close" id="panel-close" aria-label="Schließen">&times;</button>
+      <div id="panel-content"></div>
+    </aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/layout-base@2.0.1/layout-base.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cose-base@2.2.0/cose-base.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-fcose@2.2.0/cytoscape-fcose.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

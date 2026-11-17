@@ -1,0 +1,6 @@
+data/
+training/data/
+training/checkpoints/
+__pycache__/
+*.log
+.env
