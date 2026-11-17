@@ -17,13 +17,28 @@ from tagger import TAG_ID, Tagger, encode, gold_to_tags
 HERE = Path(__file__).resolve().parent
 
 
-def load(name, data_dir):
+def chunks(words, tags, size):
+    """Lange (echte) Seiten in Stücke von ca. `size` Wörtern teilen - nur an Zeilenanfängen mit "*" oder "#",
+    damit keine Literaturangabe zerrissen wird. Die Etiketten stammen von der ganzen Seite und bleiben gültig."""
+    if not size or len(words) <= size:
+        return [(words, tags)]
+    out, start = [], 0
+    cuts = [i + 1 for i, w in enumerate(words[:-1]) if w == "\n" and words[i + 1] in ("*", "#")]
+    for c in cuts + [len(words)]:
+        if c - start >= size or c == len(words):
+            if c > start:
+                out.append((words[start:c], tags[start:c]))
+            start = c
+    return out
+
+
+def load(name, data_dir, chunk=0, repeat=1):
     rows = [json.loads(l) for l in open(HERE / data_dir / f"{name}.jsonl", encoding="utf-8")]
     out = []
     for r in rows:
         toks, tags = gold_to_tags(r["text"], r["gold"])
-        out.append(([t[0] for t in toks], [TAG_ID[t] for t in tags]))
-    return out
+        out += chunks([t[0] for t in toks], [TAG_ID[t] for t in tags], chunk)
+    return out * repeat
 
 
 def batchify(data, vocab, idx):
@@ -56,10 +71,12 @@ if __name__ == "__main__":
     ap.add_argument("--epochs", type=int, default=8)
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--lr", type=float, default=2e-3)
+    ap.add_argument("--chunk", type=int, default=0, help="lange Seiten von --data in Stücke dieser Wortzahl teilen (z.B. 400)")
+    ap.add_argument("--repeat", type=int, default=1, help="Trainingsseiten von --data so oft wiederholen (echte Seiten höher gewichten)")
     args = ap.parse_args()
     torch.manual_seed(0); random.seed(0)
 
-    train, val = load("train", args.data), load("val", args.data)
+    train, val = load("train", args.data, args.chunk, args.repeat), load("val", args.data, args.chunk)
     if args.extra_train:
         train += load("train", args.extra_train)
     cnt = Counter(w.lower() for words, _ in train for w in words)

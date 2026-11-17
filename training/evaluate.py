@@ -92,15 +92,18 @@ def backend_scratch():
     return run
 
 
-def backend_tagger():
+def backend_tagger(checkpoint="checkpoints/tagger.pt"):
     import torch
     from tagger import Tagger, predict, tags_to_record
-    ck = torch.load(HERE / "checkpoints" / "tagger.pt", map_location="cpu")
+    ck = torch.load(HERE / checkpoint, map_location="cpu")
     model = Tagger(len(ck["vocab"]) + 2); model.load_state_dict(ck["model"])
 
     def run(text):
         toks, tags = predict(model, ck["vocab"], text)
-        return json.dumps(tags_to_record(text, toks, tags), ensure_ascii=False)
+        rec = tags_to_record(text, toks, tags)
+        for p in rec.get("publications", []):
+            p.pop("pos", None)  # interne Textposition, nicht Teil der Lösung
+        return json.dumps(rec, ensure_ascii=False)
     return run
 
 
@@ -119,13 +122,14 @@ if __name__ == "__main__":
     ap.add_argument("--split", default="test")
     ap.add_argument("--data", default="data/fake", help="Datenverzeichnis, z.B. data/real")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--checkpoint", default="checkpoints/tagger.pt", help="nur für --backend tagger")
     ap.add_argument("--show", type=int, default=2, help="so viele Fehlerbeispiele anzeigen")
     args = ap.parse_args()
 
     rows = [json.loads(l) for l in open(HERE / args.data / f"{args.split}.jsonl", encoding="utf-8")]
     if args.limit:
         rows = rows[: args.limit]
-    run = {"scratch": backend_scratch, "tagger": backend_tagger, "rules": backend_rules, "gold": backend_gold}[args.backend]()
+    run = backend_tagger(args.checkpoint) if args.backend == "tagger" else         {"scratch": backend_scratch, "rules": backend_rules, "gold": backend_gold}[args.backend]()
 
     pairs, valid, bad = [], 0, []
     for i, r in enumerate(rows):

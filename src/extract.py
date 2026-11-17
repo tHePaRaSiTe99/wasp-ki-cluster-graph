@@ -70,7 +70,39 @@ def _run_model(text: str) -> dict:
     model, vocab = loaded
     text = re.sub(r"<!--.*?-->", "", text, flags=re.S).strip() + "\n"  # Quell-Kommentar des Crawlers ist kein Seiteninhalt
     toks, tags = predict(model, vocab, text)
-    return tags_to_record(text, toks, tags) if toks else {}
+    rec = tags_to_record(text, toks, tags) if toks else {}
+    entries = _entry_links(text)  # gleicher Text wie beim Modell -> Positionen passen zusammen
+    for p in rec.get("publications") or []:
+        p["url"] = _link_for(entries, p.pop("pos", None))
+    return rec
+
+
+_URL_RE = re.compile(r"\]\((https?://[^\s)]+)|<(https?://[^\s>]+)>")
+
+
+def _pick_link(urls: list[str]) -> str:
+    """DOI vor allem anderen; bei mehreren DOIs die letzte (Buch-DOI zuerst, Kapitel-DOI danach)."""
+    dois = [u for u in urls if re.match(r"https?://(dx\.)?doi\.org/", u)]
+    return (dois[-1] if dois else urls[0]) if urls else ""
+
+
+def _entry_links(text: str) -> list[tuple[int, int, str]]:
+    """Listeneinträge ("* ...") mit ihrem Link -> [(start, ende, url)]. Der Link steht entweder am Ende des Eintrags
+    (<https://...>) oder in einer eigenen Zeile direkt darunter ([https://...](https://...)); beides gehört zum
+    Eintrag, bis der nächste Eintrag oder die nächste Überschrift beginnt. Modellfrei, direkt aus dem Seitentext."""
+    starts = [m.start() for m in re.finditer(r"^(?:\* |#)", text, flags=re.M)] + [len(text)]
+    out = []
+    for a, b in zip(starts, starts[1:]):
+        if text.startswith("* ", a):
+            urls = [m.group(1) or m.group(2) for m in _URL_RE.finditer(text, a, b)]
+            out.append((a, b, _pick_link(urls)))
+    return out
+
+
+def _link_for(entries: list[tuple[int, int, str]], pos) -> str:
+    if pos is None:
+        return ""
+    return next((url for a, b, url in entries if a <= pos < b), "")
 
 
 def _h1(text: str) -> str:
@@ -94,7 +126,7 @@ def extract_text(text: str) -> dict:
 
     projects: dict[str, dict] = {}
     items = [{"name": p["title"], "participants": p["authors"], "year": p.get("year"), "venue": p.get("venue", ""),
-              "kind": "publication"} for p in rec.get("publications") or []]
+              "url": p.get("url", ""), "kind": "publication"} for p in rec.get("publications") or []]
     if INCLUDE_PROJECTS:
         items += [{"name": p["name"], "participants": p["participants"], "kind": "project"} for p in rec.get("projects") or []]
     for it in items:

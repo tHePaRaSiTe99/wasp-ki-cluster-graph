@@ -170,7 +170,12 @@ def build_graph() -> nx.Graph:
                 continue
             proj_id = f"project:{fold(name)}"
             if proj_id not in g:
-                g.add_node(proj_id, type="project", label=name, description="")
+                g.add_node(proj_id, type="project", label=name, description="", kind=project.get("kind") or "project",
+                           year=project.get("year"), venue=project.get("venue") or "", url="")
+            node = g.nodes[proj_id]
+            for key in ("year", "venue", "url"):  # dieselbe Publikation auf mehreren Seiten: fehlende Angaben ergänzen
+                if project.get(key) and not node.get(key):
+                    node[key] = project[key]
             if len(project.get("description") or "") > len(g.nodes[proj_id]["description"]):
                 g.nodes[proj_id]["description"] = project["description"]
             for participant in project.get("participants", []):
@@ -202,7 +207,7 @@ def collaboration_edges(g: nx.Graph) -> dict[tuple[str, str], dict]:
     pairs: dict[tuple[str, str], dict] = {}
 
     def entry(a: str, b: str) -> dict:
-        return pairs.setdefault(tuple(sorted((a, b))), {"projects": [], "contexts": [], "explicit": False})
+        return pairs.setdefault(tuple(sorted((a, b))), {"projects": [], "items": [], "contexts": [], "explicit": False})
 
     for u, v, attrs in g.edges(data=True):
         if attrs.get("type") == "cooperation":
@@ -216,7 +221,10 @@ def collaboration_edges(g: nx.Graph) -> dict[tuple[str, str], dict]:
         people = [n for n in g.neighbors(node) if g.nodes[n]["type"] == "person"]
         if 2 <= len(people) <= MAX_PARTICIPANTS_FOR_PAIRS:
             for a, b in combinations(people, 2):
-                entry(a, b)["projects"].append(attrs["label"])
+                e = entry(a, b)
+                e["projects"].append(attrs["label"])
+                e["items"].append({"title": attrs["label"], "url": attrs.get("url") or "", "year": attrs.get("year"),
+                                   "venue": attrs.get("venue") or "", "kind": attrs.get("kind") or "project"})
     return pairs
 
 
@@ -248,7 +256,7 @@ def export_for_cytoscape(g: nx.Graph, out_path: Path) -> None:
             "source": a, "target": b, "type": "collaboration",
             "explicit": info["explicit"],
             "weight": len(info["projects"]) + len(info["contexts"]),
-            "projects": info["projects"], "context": context,
+            "projects": info["projects"], "items": info["items"], "context": context,
         }})
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
