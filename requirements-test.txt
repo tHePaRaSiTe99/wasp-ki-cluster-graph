@@ -1,0 +1,6 @@
+# Für die Tests (ohne torch: die Tests brauchen das Modell nicht)
+requests
+beautifulsoup4
+markdownify
+networkx
+pytest

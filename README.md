@@ -36,3 +36,8 @@ Projekte werden bewusst nicht ausgegeben (`INCLUDE_PROJECTS` in `src/extract.py`
 Seite. Weil das Modell nicht im Repo liegt, wird `web/data/graph.json` lokal erzeugt und mitcommittet:
 `python src/pipeline.py`, dann `git add web/data/graph.json && git commit -m "Graph aktualisiert" && git push`.
 Einmalig nötig: unter *Settings → Pages* als Quelle „GitHub Actions“ wählen.
+
+## Tests
+`python -m pip install -r requirements-test.txt`, dann `python -m pytest`. Die Tests laufen ohne Netz und ohne Modell
+(Webseiten und Tagger werden simuliert) und fassen `data/` nicht an. GitHub Actions führt sie bei jedem Push und PR aus
+(`.github/workflows/tests.yml`).
