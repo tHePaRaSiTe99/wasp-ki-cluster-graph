@@ -20,8 +20,8 @@ RAW_DIR = ROOT / "data" / "raw"
 EXTRACTED_DIR = ROOT / "data" / "extracted"
 CHECKPOINT = ROOT / "training" / "checkpoints" / "tagger.pt"
 
-# Auf den TH-Köln-Personenseiten gibt es keinen Projekt-Abschnitt (nur Publikationen). Projekte aus dem Modell würden
-# dort nur Fehlgriffe erzeugen; für andere Seiten auf True setzen.
+# Projekte kommen modellfrei aus dem Abschnitt "## +Projekte / Kooperationen" (siehe _page_projects). Die
+# PROJ-Etiketten des Modells würden dort nur Fehlgriffe erzeugen; für andere Seitentypen auf True setzen.
 INCLUDE_PROJECTS = False
 
 _model = None
@@ -68,9 +68,95 @@ def _run_model(text: str) -> dict:
     sys.path.insert(0, str(ROOT / "training"))
     from tagger import predict, tags_to_record
     model, vocab = loaded
-    text = re.sub(r"<!--.*?-->", "", text, flags=re.S).strip() + "\n"  # Quell-Kommentar des Crawlers ist kein Seiteninhalt
+    text = _clean_text(text)  # Quell-Kommentar des Crawlers ist kein Seiteninhalt
     toks, tags = predict(model, vocab, text)
-    return tags_to_record(text, toks, tags) if toks else {}
+    rec = tags_to_record(text, toks, tags) if toks else {}
+    entries = _entry_links(text)  # gleicher Text wie beim Modell -> Positionen passen zusammen
+    proj_secs = _project_sections(text)
+    pubs = []
+    for p in rec.get("publications") or []:
+        pos = p.pop("pos", None)
+        if pos is not None and any(a <= pos < b for a, b in proj_secs):
+            continue  # steht im Projekt-Abschnitt -> ist ein Projekt, keine Veröffentlichung
+        p["url"] = _link_for(entries, pos)
+        pubs.append(p)
+    rec["publications"] = pubs
+    return rec
+
+
+_URL_RE = re.compile(r"\]\((https?://[^\s)]+)|<(https?://[^\s>]+)>")
+
+
+def _pick_link(urls: list[str]) -> str:
+    """DOI vor allem anderen; bei mehreren DOIs die letzte (Buch-DOI zuerst, Kapitel-DOI danach)."""
+    dois = [u for u in urls if re.match(r"https?://(dx\.)?doi\.org/", u)]
+    return (dois[-1] if dois else urls[0]) if urls else ""
+
+
+def _entry_links(text: str) -> list[tuple[int, int, str]]:
+    """Listeneinträge ("* ...") mit ihrem Link -> [(start, ende, url)]. Der Link steht entweder am Ende des Eintrags
+    (<https://...>) oder in einer eigenen Zeile direkt darunter ([https://...](https://...)); beides gehört zum
+    Eintrag, bis der nächste Eintrag oder die nächste Überschrift beginnt. Modellfrei, direkt aus dem Seitentext."""
+    starts = [m.start() for m in re.finditer(r"^(?:\* |#)", text, flags=re.M)] + [len(text)]
+    out = []
+    for a, b in zip(starts, starts[1:]):
+        if text.startswith("* ", a):
+            urls = [m.group(1) or m.group(2) for m in _URL_RE.finditer(text, a, b)]
+            out.append((a, b, _pick_link(urls)))
+    return out
+
+
+def _link_for(entries: list[tuple[int, int, str]], pos) -> str:
+    if pos is None:
+        return ""
+    return next((url for a, b, url in entries if a <= pos < b), "")
+
+
+def _clean_text(text: str) -> str:
+    return re.sub(r"<!--.*?-->", "", text, flags=re.S).strip() + "\n"
+
+
+def _project_sections(text: str) -> list[tuple[int, int]]:
+    """Textbereiche der Abschnitte "## ... Projekte ..." -> [(start, ende)]."""
+    heads = [(m.start(), "projekt" in m.group(0).lower()) for m in re.finditer(r"^## .*$", text, flags=re.M)]
+    heads.append((len(text), False))
+    return [(a, b) for (a, is_proj), (b, _) in zip(heads, heads[1:]) if is_proj]
+
+
+def _unescape(s: str) -> str:
+    return re.sub(r"\\([_*\[\]()#.\-!])", r"\1", s)
+
+
+def _page_projects(text: str) -> list[dict]:
+    """Projekte einer Seite, modellfrei aus dem festen Layout:
+        * **Projektname**
+          Beschreibung ...
+          [Projektseite](https://...)
+    Name = fett gedruckter Teil der ersten Zeile, Beschreibung = folgende Textzeilen, Link = erster Link im Eintrag."""
+    entries = []
+    for a, b in _project_sections(text):
+        for line in text[a:b].splitlines():
+            if line.startswith("* "):
+                entries.append([line[2:].strip()])
+            elif entries and entries[-1] is not None and line.startswith(" ") and line.strip():
+                entries[-1].append(line.strip())
+            elif line.strip() and not line.startswith(" "):
+                entries.append(None)  # Überschrift o. Ä. beendet den Eintrag
+    out = []
+    for e in filter(None, entries):
+        first, rest = e[0], e[1:]
+        bold = re.match(r"\*\*(.+?)\*\*", first)
+        name = _unescape((bold.group(1) if bold else first).strip()).strip()
+        if not name or re.match(r"Mitglied(schaft)? (des|im|in)\b", name):  # Mitgliedschaft ist kein Projekt
+            continue
+        desc_lines = [l for l in rest if not re.match(r"\[[^\]]*\]\(https?://", l)]
+        if bold and first[bold.end():].strip():
+            desc_lines.insert(0, first[bold.end():].strip())
+        urls = [u.group(1) or u.group(2) for u in _URL_RE.finditer("\n".join(e))]
+        desc = _unescape(" ".join(desc_lines))
+        out.append({"name": name, "description": desc[:600] + ("…" if len(desc) > 600 else ""),
+                    "url": urls[0] if urls else "", "kind": "project"})
+    return out
 
 
 def _h1(text: str) -> str:
@@ -94,17 +180,18 @@ def extract_text(text: str) -> dict:
 
     projects: dict[str, dict] = {}
     items = [{"name": p["title"], "participants": p["authors"], "year": p.get("year"), "venue": p.get("venue", ""),
-              "kind": "publication"} for p in rec.get("publications") or []]
+              "url": p.get("url", ""), "kind": "publication"} for p in rec.get("publications") or []]
     if INCLUDE_PROJECTS:
         items += [{"name": p["name"], "participants": p["participants"], "kind": "project"} for p in rec.get("projects") or []]
+    items += [{**p, "participants": []} for p in _page_projects(_clean_text(text))]
     for it in items:
-        key = _fold(it["name"])
-        if not key:
+        key = (it["kind"], _fold(it["name"]))
+        if not key[1]:
             continue
         parts = list(it["participants"])
         if owner and _fold(owner) not in {_fold(x) for x in parts}:
             parts.append(owner)  # steht auf der Seite der Person -> die Person ist beteiligt
-        projects[key] = {**it, "description": "", "participants": parts}
+        projects[key] = {"description": "", **it, "participants": parts}
     return {"people": people, "projects": list(projects.values()), "cooperations": []}
 
 

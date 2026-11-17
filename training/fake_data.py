@@ -134,6 +134,66 @@ def rich_title(rng):
     return t[0].upper() + t[1:]
 
 
+def punct_title(rng, t):
+    """Titel mit den Satzzeichen echter Literaturlisten: Fragezeichen, Prozent, Klammer-Abkürzungen, Gedankenstrich-
+    Untertitel, Anführungszeichen. Genau an solchen Stellen hat das Modell Titel früher zu kurz abgeschnitten."""
+    r = rng.random()
+    if r < 0.15:
+        t = t + "?"
+    elif r < 0.25:
+        t = f"{t} ({''.join(w[0] for w in rng.sample(EN_W, rng.randint(2, 4))).upper()})"
+    elif r < 0.35:
+        t = f"{t} – {' '.join(rng.sample(EN_W + DE_W, rng.randint(2, 5))).capitalize()}"
+    elif r < 0.42:
+        t = t.replace(" ", f" {rng.randint(10, 100)} % ", 1)
+    elif r < 0.50:
+        t = f"„{rng.choice(DE_W)}“ – {t}"
+    elif r < 0.56:
+        t = f"{t}: {rng.choice(['Status quo', 'A Case Study', 'Teil 1', 'Lessons Learned', 'Herausforderungen und Potenziale'])}"
+    elif r < 0.60:
+        t = f"{t}, {rng.choice(DE_W)} & {rng.choice(DE_W)}"
+    return t
+
+
+MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+
+
+def two_line_entry(rng, p, co):
+    """Zweites echtes Layout (frei gepflegte Listen):
+        * Titel
+          Autoren, 2016, Hg.: Verlag
+          [Link](https://...)
+    Gibt die Zeilen zurück und setzt authors_raw/venue so, dass sie WÖRTLICH im Text stehen."""
+    style = rng.randint(0, 4)
+    if style == 0:    # Mai, Vanessa; Neef, Caterina; Richert, Anja, 2022, Hg.: ...
+        raw = [f"{l}, {f}" for f, l in co]; a = "; ".join(raw)
+    elif style == 1:  # Salmen, J. ; Suttorp, T. ; ...
+        raw = [f"{l}, {f[0]}." for f, l in co]; a = " ; ".join(raw)
+    elif style == 2:  # Kamau, E., Waschke, J.S., ...
+        raw = [f"{l}, {f[0]}." for f, l in co]; a = ", ".join(raw)
+    else:             # Andreas Schwenk, Bert Randerath / T. Schneiders, A. Löschel
+        raw = [f"{f} {l}" if style == 3 else f"{f[0]}. {l}" for f, l in co]; a = ", ".join(raw)
+    date = str(p["year"]) if rng.random() < 0.75 else rng.choice([f"{rng.choice(MONTHS)} {p['year']}", f"{rng.randint(1, 28):02d} {rng.choice(MONTHS)} {p['year']}"])
+    venue = p["venue"] or rng.choice(PUBLISHERS + ["IEEE Xplore", "Springer", "CIRP", "Energieagentur NRW"])
+    v = rng.random()
+    t = p["title"]
+    first = rng.choice([t, t, t, f'"{t}"', f"{t}."]) + "  "
+    if v < 0.6:       # Jahr und Hg. in einer Zeile
+        lines = [f"* {first}", f"  {a}, {date}, Hg.: {venue}"]
+    elif v < 0.8:     # Jahr erst in der dritten Zeile
+        lines = [f"* {first}", f"  {a}, Hg.: {venue}  ", f"  {rng.choice(JOURNALS)}, Volume {rng.randint(1, 80)}, {p['year']}, Pages {rng.randint(1, 300)}-{rng.randint(301, 600)}"]
+    else:             # ohne Hg.: Zeitschrift und Jahr am Ende
+        venue = ""
+        lines = [f"* {first}", f"  {a}, {rng.choice(JOURNALS)} {rng.randint(1, 80)}, pp. {rng.randint(1, 30)}-{rng.randint(31, 60)}, {p['year']}"]
+    if rng.random() < 0.4:
+        url = p["_url"]
+        lines += ["", f'  [{rng.choice([url, "Link", "Link Full Paper", "DOI"])}]({url} "Sie werden auf eine externe Webseite weitergeleitet.")']
+    # Lösung: Autorennamen wie die Auswertung sie vergleicht ("Salmen, J." -> "J. Salmen")
+    p["authors_raw"], p["venue"] = raw, venue
+    p["authors"] = [f"{r.split(', ', 1)[1]} {r.split(', ', 1)[0]}" if ", " in r else r for r in raw]
+    return lines
+
+
 def th_name(rng, lasts):
     first = rng.choice(FIRST) if rng.random() < 0.6 else made_up_name(rng)
     if rng.random() < 0.15:
@@ -157,6 +217,7 @@ def make_th_example(rng, lasts):
         co = [th_name(rng, lasts) for _ in range(rng.randint(0, 6))]
         co.insert(rng.randint(0, len(co)), (mf, ml))
         t = rich_title(rng) if rng.random() < 0.85 else f"{rng.choice(T_A)} {rng.choice(T_B)} {rng.choice(T_C)}"
+        t = punct_title(rng, t)
         year = rng.randint(2008, 2025)
         kind = rng.random()
         venue = rng.choice(JOURNALS) if kind < 0.7 else ""
@@ -186,7 +247,15 @@ def make_th_example(rng, lasts):
                      "  [PROX (Project Exchange TH Köln)](https://prox.innovation-hub.de/projects?filter=x)"] if rng.random() < 0.3 else []) + [""])
     if research:
         sections.append(["## Forschungsgebiete", ""] + [f"* {t}" for t in research] + [""])
-    if pubs:
+    if pubs and rng.random() < 0.5:  # zweites echtes Layout: "* Titel" / "  Autoren, Jahr, Hg.: ..."
+        rows = []
+        for i, p in enumerate(pubs):
+            if i and rng.random() < 0.1:
+                rows += [rng.choice(["### Buch", "### Buchkapitel", "### Fachartikel", "### Konferenzbeiträge"])]
+            co = [(a.rsplit(" ", 1)[0], a.rsplit(" ", 1)[1]) for a in p["authors"]]
+            rows += two_line_entry(rng, p, co)
+        sections.append([rng.choice(["## +Publikationen", "## + Publikationen"]), ""] + rows + [""])
+    elif pubs:
         sections.append(["## + Publikationen", ""] + [f"* {'; '.join(p['authors_raw'])} ({p['year']}): {p['title']}. {p['_tail']}{p['_flag']}<{p['_url']}>" for p in pubs] + [""])
     if rng.random() < 0.4:
         sections.append(["## +Lebenslauf", "", "|  |  |", "| --- | --- |", f"| {rng.randint(1995, 2015)} bis {rng.randint(2016, 2022)} | Hahn-Schickard-Gesellschaft e.V. Aufbau der Forschungsgruppe |", ""])

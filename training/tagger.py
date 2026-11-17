@@ -54,20 +54,32 @@ def gold_to_tags(text: str, gold: dict):
     mark([r for r in p0.get("role", "").split(", ") if r], "ROLE")
     mark(sorted({p0["name"], *[a for p in pubs for a in p.get("authors_raw") or p["authors"]],
                  *[a for p in projs for a in p["participants"]]}, key=len, reverse=True), "PER")
-    # Jahr: nur auf Zeilen mit einer Publikation
-    line_has_pub, cur = {}, []
-    lines, start = [], 0
-    for i, w in enumerate(words + ["\n"]):
-        if w == "\n":
-            lines.append((start, i)); start = i + 1
-    for a, b in lines:
-        if any(tags[j] == "B-PUB" for j in range(a, b)):
-            for pub in pubs:
-                for j in range(a, b):
-                    if words[j] == str(pub["year"]) and tags[j] == "O":
-                        tags[j] = "B-YEAR"
+    # Jahr: nur in Einträgen mit einer Publikation, das erste Vorkommen des Jahrs dieser Publikation
+    year_of = {" ".join(t[0] for t in tokenize(p["title"])): str(p["year"]) for p in pubs if p.get("year")}
+    ent = entry_ids(text, toks)
+    for a, b in spans(tags, "PUB"):
+        y = year_of.get(" ".join(words[a:b]))
+        same = [j for j in range(len(words)) if ent[j] == ent[a]]
+        if y and not any(tags[j] == "B-YEAR" for j in same):
+            j = next((j for j in same if words[j] == y and tags[j] == "O"), None)
+            if j is not None:
+                tags[j] = "B-YEAR"
     mark(p0.get("expertise", []), "EXP")
     return toks, tags
+
+
+def entry_ids(text: str, toks) -> list[int]:
+    """Nummer des Listeneintrags je Token. Ein Eintrag beginnt mit einer nicht eingerückten Zeile; eingerückte
+    Folgezeilen (auch nach Leerzeilen) gehören dazu. So zählen zweizeilige Angaben ("* Titel" / "  Autoren, 2016")
+    als EINE Literaturangabe, einzeilige bleiben wie bisher je Zeile getrennt."""
+    out, cur = [], 0
+    for i, (w, a, _) in enumerate(toks):
+        if i == 0 or toks[i - 1][0] == "\n":
+            ls = text.rfind("\n", 0, a) + 1
+            if ls < len(text) and text[ls] not in " \t\n":
+                cur += 1
+        out.append(cur)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -162,18 +174,20 @@ def tags_to_record(text, toks, tags):
               "expertise": list(dict.fromkeys(txt(a, b).rstrip(":").strip() for a, b in spans(tags, "EXP")
                                               if not text[toks[a][1] - 1: toks[a][1]].isspace() or text[line_start[line_of[a]]: line_start[line_of[a]] + 1] != " "))}
     pubs, projs = [], []
-    year_lines = {line_of[i] for i, t in enumerate(tags) if t == "B-YEAR" and re.fullmatch(r"(19|20)\d\d", toks[i][0])}
-    seen_lines = set()
+    ent = entry_ids(text, toks)
+    per_ent = [(a, b, ent[a]) for a, b in spans(tags, "PER")]
+    year_ents = {ent[i] for i, t in enumerate(tags) if t == "B-YEAR" and re.fullmatch(r"(19|20)\d\d", toks[i][0])}
+    seen = set()
     for a, b in spans(tags, "PUB"):
-        l = line_of[a]
-        # Plausibilität: Eine Literaturangabe = EINE Zeile mit Jahr; pro Zeile zählt nur der erste Titel
-        if l not in year_lines or l in seen_lines:
+        e = ent[a]
+        # Plausibilität: Eine Literaturangabe = EIN Listeneintrag mit Jahr; pro Eintrag zählt nur der erste Titel
+        if e not in year_ents or e in seen:
             continue
-        seen_lines.add(l)
-        year = next((toks[i][0] for i, t in enumerate(tags) if t == "B-YEAR" and line_of[i] == l and re.fullmatch(r"(19|20)\d\d", toks[i][0])), None)
-        venue = next((txt(x, y) for x, y in spans(tags, "VENUE") if line_of[x] == l), "")
-        pubs.append({"title": txt(a, b), "year": int(year) if year else None, "venue": venue,
-                     "authors": list(dict.fromkeys(normalize_name(txt(x, y)) for x, y, ll in per if ll == l))})
+        seen.add(e)
+        year = next((toks[i][0] for i, t in enumerate(tags) if t == "B-YEAR" and ent[i] == e and re.fullmatch(r"(19|20)\d\d", toks[i][0])), None)
+        venue = next((txt(x, y) for x, y in spans(tags, "VENUE") if ent[x] == e), "")
+        pubs.append({"title": txt(a, b), "pos": toks[a][1], "year": int(year) if year else None, "venue": venue,
+                     "authors": list(dict.fromkeys(normalize_name(txt(x, y)) for x, y, ee in per_ent if ee == e))})
     for a, b in spans(tags, "PROJ"):
         l = line_of[a]
         projs.append({"name": txt(a, b), "participants": list(dict.fromkeys(normalize_name(txt(x, y)) for x, y, ll in per if ll == l))})

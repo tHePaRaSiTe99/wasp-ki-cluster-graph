@@ -13,6 +13,7 @@ Was hier zusätzlich zum reinen Zusammenfügen passiert:
 import json
 import re
 import unicodedata
+from difflib import SequenceMatcher
 from itertools import combinations
 from pathlib import Path
 
@@ -147,38 +148,133 @@ def _add_person(g: nx.Graph, pid: str, display: str, member: bool = False, **att
             node[key] = value
 
 
+def _norm_work(name: str) -> str:
+    """Vergleichsform eines Titels: ohne Akzente, Satzzeichen und Mehrfach-Leerzeichen."""
+    return " ".join(re.sub(r"[^\w]+", " ", fold(name)).split())
+
+
+def _head(name: str) -> str:
+    """Kurzname vor dem Untertitel: 'KI-Assistenz – Passgenaue ...' -> 'ki assistenz'."""
+    return _norm_work(re.split(r"\s[–—-]\s|:\s|\s\(", name, maxsplit=1)[0])
+
+
+def _acronym(name: str) -> str:
+    """Abkürzung in Klammern: 'Games Technology Network (GTN)' -> 'gtn'."""
+    m = re.search(r"\(([A-ZÄÖÜ][\w.&-]{1,15})\)", name)
+    return _norm_work(m.group(1)) if m else ""
+
+
+class WorkIndex:
+    """Findet ein schon bekanntes Projekt bzw. eine Publikation wieder - auch bei Tippfehlern oder anderer
+    Schreibweise auf einer anderen Seite ('REDiEE' / 'REDIEE', 'KI-Assistenz - ...' / 'KI-Assistenz – ...')."""
+
+    def __init__(self) -> None:
+        self.items: list[dict] = []
+
+    def find(self, name: str, kind: str, year=None) -> str | None:
+        norm, head, acr = _norm_work(name), _head(name), _acronym(name)
+        for it in self.items:
+            if it["kind"] != kind:
+                continue
+            if norm == it["norm"]:
+                return it["id"]
+            if kind == "publication":
+                # Titel sind lang und eindeutig: nur fast gleiche Titel (Tippfehler) im selben Jahr
+                if (year and it["year"] and year != it["year"]) or min(len(norm), len(it["norm"])) < 20:
+                    continue
+                if SequenceMatcher(None, norm, it["norm"]).quick_ratio() >= 0.93 and \
+                        SequenceMatcher(None, norm, it["norm"]).ratio() >= 0.93:
+                    return it["id"]
+                continue
+            # Projekte: gleicher Kurzname, Abkürzung = Name des anderen, oder fast gleich geschrieben
+            if len(head) >= 4 and head == it["head"]:
+                return it["id"]
+            if (acr and acr in (it["norm"], it["head"], it["acr"])) or (it["acr"] and it["acr"] in (norm, head)):
+                return it["id"]
+            for a, b in ((norm, it["norm"]), (head, it["head"])):
+                if min(len(a), len(b)) >= 6 and SequenceMatcher(None, a, b).ratio() >= 0.9:
+                    return it["id"]
+        return None
+
+    def add(self, work_id: str, name: str, kind: str, year=None) -> None:
+        self.items.append({"id": work_id, "kind": kind, "year": year, "norm": _norm_work(name),
+                           "head": _head(name), "acr": _acronym(name)})
+
+
+def _add_work(g: nx.Graph, index: WorkIndex, registry: PersonRegistry, project: dict, create: bool = True) -> str | None:
+    """Fügt ein Projekt/eine Publikation samt Beteiligten hinzu. Mit create=False wird nur an ein schon
+    bekanntes Projekt angehängt (Seiten von Externen: deren Projekte werden nicht eigens angezeigt)."""
+    name = " ".join((project.get("name") or "").split())
+    kind = project.get("kind") or "project"
+    if not name:
+        return None
+    work_id = index.find(name, kind, project.get("year"))
+    if work_id is None:
+        if not create:
+            return None
+        work_id = f"{kind}:{fold(name)}"
+        g.add_node(work_id, type="project", label=name, description="", kind=kind,
+                   year=project.get("year"), venue=project.get("venue") or "", url="")
+        index.add(work_id, name, kind, project.get("year"))
+    node = g.nodes[work_id]
+    for key in ("year", "venue", "url"):  # dasselbe Werk auf mehreren Seiten: fehlende Angaben ergänzen
+        if project.get(key) and not node.get(key):
+            node[key] = project[key]
+    if len(project.get("description") or "") > len(node["description"]):
+        node["description"] = project["description"]
+    for participant in project.get("participants", []):
+        resolved = registry.resolve(participant)
+        if resolved:
+            pid, display = resolved
+            _add_person(g, pid, display)
+            g.add_edge(pid, work_id, type="member_of")
+    return work_id
+
+
+def _link_mentioned_people(g: nx.Graph) -> int:
+    """Personen, die in einer Projektbeschreibung mit vollem Namen genannt werden ('unter der Leitung von
+    Prof. Thorsten Schneiders'), sind beteiligt - auch Externe. Gibt die Zahl neuer Kanten zurück."""
+    people = [(n, _norm_work(a["label"])) for n, a in g.nodes(data=True)
+              if a["type"] == "person" and len(a["label"].split()) >= 2 and "." not in a["label"]]
+    added = 0
+    for w, attrs in list(g.nodes(data=True)):
+        if attrs["type"] != "project" or attrs.get("kind") != "project" or not attrs.get("description"):
+            continue
+        text = f" {_norm_work(attrs['description'])} "
+        for pid, norm in people:
+            if f" {norm} " in text and not g.has_edge(pid, w):
+                g.add_edge(pid, w, type="member_of")
+                added += 1
+    return added
+
+
 def build_graph() -> nx.Graph:
     g = nx.Graph()
     registry = PersonRegistry()
+    index = WorkIndex()
 
     # Mitgliederseite zuerst: dort stehen die verlässlichen Vollnamen
     files = sorted(EXTRACTED_DIR.glob("*.json"), key=lambda p: (p.stem != MEMBERS_STEM, p.stem))
+    external_projects = []  # Projekte von Seiten Externer: erst am Ende, nur wenn ein Mitglied sie auch hat
 
     for json_path in files:
         is_members_page = json_path.stem == MEMBERS_STEM
         data = json.loads(json_path.read_text(encoding="utf-8"))
 
-        for person in data.get("people", []):
+        owner_is_member = False
+        for i, person in enumerate(data.get("people", [])):
             resolved = registry.resolve(person.get("name", ""))
             if resolved:
                 pid, display = resolved
                 _add_person(g, pid, display, member=is_members_page, **person)
+                if i == 0:
+                    owner_is_member = g.nodes[pid]["member"]
 
         for project in data.get("projects", []):
-            name = " ".join((project.get("name") or "").split())
-            if not name:
-                continue
-            proj_id = f"project:{fold(name)}"
-            if proj_id not in g:
-                g.add_node(proj_id, type="project", label=name, description="")
-            if len(project.get("description") or "") > len(g.nodes[proj_id]["description"]):
-                g.nodes[proj_id]["description"] = project["description"]
-            for participant in project.get("participants", []):
-                resolved = registry.resolve(participant)
-                if resolved:
-                    pid, display = resolved
-                    _add_person(g, pid, display)
-                    g.add_edge(pid, proj_id, type="member_of")
+            if project.get("kind") == "project" and not owner_is_member and not is_members_page:
+                external_projects.append(project)
+            else:
+                _add_work(g, index, registry, project)
 
         for coop in data.get("cooperations", []):
             a, b = registry.resolve(coop.get("person_a", "")), registry.resolve(coop.get("person_b", ""))
@@ -191,6 +287,10 @@ def build_graph() -> nx.Graph:
                 contexts = _merge_list(contexts, [coop["context"]])
             g.add_edge(a[0], b[0], type="cooperation", contexts=contexts)
 
+    # Externe mit demselben Projekt wie ein Mitglied: Kante ja, eigener Projektknoten nein
+    for project in external_projects:
+        _add_work(g, index, registry, project, create=False)
+    _link_mentioned_people(g)
     return g
 
 
@@ -202,7 +302,7 @@ def collaboration_edges(g: nx.Graph) -> dict[tuple[str, str], dict]:
     pairs: dict[tuple[str, str], dict] = {}
 
     def entry(a: str, b: str) -> dict:
-        return pairs.setdefault(tuple(sorted((a, b))), {"projects": [], "contexts": [], "explicit": False})
+        return pairs.setdefault(tuple(sorted((a, b))), {"projects": [], "items": [], "contexts": [], "explicit": False})
 
     for u, v, attrs in g.edges(data=True):
         if attrs.get("type") == "cooperation":
@@ -216,7 +316,10 @@ def collaboration_edges(g: nx.Graph) -> dict[tuple[str, str], dict]:
         people = [n for n in g.neighbors(node) if g.nodes[n]["type"] == "person"]
         if 2 <= len(people) <= MAX_PARTICIPANTS_FOR_PAIRS:
             for a, b in combinations(people, 2):
-                entry(a, b)["projects"].append(attrs["label"])
+                e = entry(a, b)
+                e["projects"].append(attrs["label"])
+                e["items"].append({"title": attrs["label"], "url": attrs.get("url") or "", "year": attrs.get("year"),
+                                   "venue": attrs.get("venue") or "", "kind": attrs.get("kind") or "project"})
     return pairs
 
 
@@ -248,7 +351,7 @@ def export_for_cytoscape(g: nx.Graph, out_path: Path) -> None:
             "source": a, "target": b, "type": "collaboration",
             "explicit": info["explicit"],
             "weight": len(info["projects"]) + len(info["contexts"]),
-            "projects": info["projects"], "context": context,
+            "projects": info["projects"], "items": info["items"], "context": context,
         }})
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

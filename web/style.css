@@ -3,7 +3,7 @@
   --brand:#ff6b3d; --brand-dark:#e04a1c;
   --ink:#f4ead8; --muted:#8f8a9e;
   --bg:#0d0b1a; --surface:#17142a; --line:#2c2843; --tag:#221e38;
-  --member:#ff6b3d; --external:#7fd1c7; --project:#f2c14e;
+  --member:#ff6b3d; --external:#7fd1c7; --project:#f2c14e; --publication:#b59cff;
   --edge:#3b3560; --edge-strong:#ff6b3d;
   --font:"Bricolage Grotesque", sans-serif;
   --mono:"Space Mono", monospace;
@@ -36,6 +36,7 @@ html,body{height:100%;font-family:var(--font);color:var(--ink);background:var(--
 .numbers>div:first-child b{color:var(--member)}
 .numbers>div:nth-child(2) b{color:var(--external)}
 .numbers>div:nth-child(3) b{color:var(--project)}
+.numbers>div:nth-child(4) b{color:var(--publication)}
 .numbers span{font-size:11px;color:var(--muted);margin-top:6px;letter-spacing:.06em;text-transform:uppercase}
 .numbers .note{position:absolute;top:56px;right:0;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
 
@@ -50,6 +51,7 @@ html,body{height:100%;font-family:var(--font);color:var(--ink);background:var(--
 .results button:hover,.results button:focus-visible{background:var(--tag);outline:none}
 .results .r-dim{opacity:.45}
 .results .r-kind{font-family:var(--mono);font-size:10px;color:var(--project);text-transform:uppercase}
+.results .r-kind.pub{color:var(--publication)}
 .hint{font-family:var(--mono);font-size:11px;color:var(--brand);margin:8px 18px 0}
 .hint:empty{display:none}
 
@@ -77,7 +79,8 @@ html,body{height:100%;font-family:var(--font);color:var(--ink);background:var(--
 .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
 .dot-member{background:var(--member);box-shadow:0 0 12px var(--member)}
 .dot-external{background:var(--external);box-shadow:0 0 10px var(--external)}
-.dot-project{background:var(--project);border-radius:2px;transform:rotate(45deg)}
+.dot-project{background:var(--project);border-radius:3px}
+.dot-publication{background:var(--publication);border-radius:1px;transform:rotate(45deg) scale(.85)}
 .line{width:18px;height:2px;background:var(--edge);display:inline-block}
 
 .panel{top:120px;right:32px;bottom:110px;width:380px;overflow-y:auto;padding:28px;border-radius:28px;background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--line);box-shadow:0 40px 80px -30px #000;animation:rise .35s cubic-bezier(.2,.8,.2,1)}

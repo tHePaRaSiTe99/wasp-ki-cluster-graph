@@ -53,6 +53,85 @@ def parse_entry(line: str) -> dict | None:
             "authors": [normalize_author(a) for a in raw_authors], "authors_raw": raw_authors}
 
 
+# Zweites Layout auf vielen Seiten (frei gepflegte Listen):
+#     * Titel
+#       Autor, Autor, 2016, Hg.: Verlag/Tagung
+#       [Link](https://...)
+_YEAR = re.compile(r"(?<![\w.-])((?:19|20)\d\d)(?![\w-])")
+_INITIALS = re.compile(r"[A-ZÄÖÜ][\w'’\-]+(?:\s[a-z]{1,3})?,\s?[A-ZÄÖÜ]\.(?:\s?-?[A-ZÄÖÜ]\.)*")
+_NOT_NAME = {"springer", "vieweg", "verlag", "ieee", "hg", "proceedings", "journal", "press", "gmbh", "university",
+             "universität", "akademie", "kolloquium", "under", "review", "januar", "februar", "märz", "april", "mai", "juni",
+             "juli", "august", "september", "oktober", "november", "dezember", "isbn", "vol", "band"}
+
+
+def _looks_like_name(chunk: str) -> bool:
+    words = chunk.split()
+    if not 1 < len(words) <= 4 or any(c.isdigit() for c in chunk):
+        return False
+    if any(w.strip(".").lower() in _NOT_NAME for w in words):
+        return False
+    return all(w[:1].isupper() or w in {"van", "von", "de", "der", "den", "du", "la"} for w in words)
+
+
+def _authors_two_line(line: str) -> list[str]:
+    """Autorenteil einer Detailzeile (alles vor dem Jahr bzw. vor 'Hg.:'); wörtlich, damit er im Text markierbar bleibt."""
+    cut = len(line)
+    for m in (_YEAR.search(line), re.search(r",?\s*Hg\.:", line), re.search(r",?\s*In:", line)):
+        if m:
+            cut = min(cut, m.start())
+    part = line[:cut].strip().rstrip(",").strip()
+    part = re.sub(r"\s+(?:et al\.?|and others)$", "", part)
+    if ";" in part:
+        return [a for a in (re.sub(r"\s*\((?:Hg|Hrsg)\.\)$", "", a.strip()) for a in part.split(";"))
+                if a and not any(c.isdigit() for c in a)]
+    found = [] if re.match(r"[A-ZÄÖÜ]\.", part) else _INITIALS.findall(part)  # "T. Schneiders, ..." = Vorname zuerst
+    if found:
+        return found
+    out = []
+    for chunk in re.split(r",\s*|\s+and\s+|\s+und\s+", part):
+        chunk = re.sub(r"\s+et al\.?$", "", chunk.strip())
+        if not _looks_like_name(chunk):
+            break  # Autoren stehen vorne; danach kommen Verlag/Tagung
+        out.append(chunk)
+    return out
+
+
+def parse_two_line(first: str, details: list[str]) -> dict | None:
+    title = first.strip().strip('"“”„«»').strip().rstrip(".").strip().strip('"“”„«»').lstrip("-–").strip()
+    if re.match(r"(Alle|Automatisierte).*Publikation", title):  # Sammelverweis, keine Publikation
+        return None
+    details = [d for d in details if d and not d.startswith("[") and not re.match(r"https?://", d)]
+    if not title or not details:
+        return None
+    joined = " ".join(details)
+    year = _YEAR.search(joined)
+    if not year:
+        return None
+    raw_authors = _authors_two_line(details[0])
+    vm = re.search(r"Hg\.:\s*(.+)$", details[0])
+    venue = vm.group(1).strip().rstrip(".").strip() if vm else ""
+    return {"title": title, "year": int(year.group(1)), "venue": venue, "url": "",
+            "authors": [normalize_author(a) for a in raw_authors], "authors_raw": raw_authors}
+
+
+def pub_entries(block: list[str]) -> list[tuple[str, list[str]]]:
+    """Aufzählungspunkt + eingerückte Folgezeilen (Leerzeilen dazwischen erlaubt) -> [(erste Zeile, [Folgezeilen])]."""
+    out, open_ = [], False
+    for line in block:
+        if line.startswith("* "):
+            out.append((line[2:], []))
+            open_ = True
+        elif open_ and line.startswith(" ") and line.strip():
+            out[-1][1].append(line.strip())
+        elif line.strip() and not line.startswith(" "):
+            open_ = False  # z. B. Zwischenüberschrift "### Buch" beendet den Eintrag
+    return out
+
+
+def parse_pub(first: str, details: list[str]) -> dict | None:
+    return parse_entry(first) or parse_two_line(first, details)
+
+
 def bullets(block: list[str]) -> list[str]:
     out = []
     for line in block:
@@ -84,7 +163,7 @@ def parse_page(text: str) -> dict:
             head = re.sub(r"^[+\s]+", "", l[3:]).strip().lower()
             cur = SECTIONS.get(head)
             if cur:
-                blocks[cur] = []
+                blocks.setdefault(cur, [])  # manche Seiten haben den Abschnitt zweimal
         elif cur:
             blocks[cur].append(l)
 
@@ -92,7 +171,7 @@ def parse_page(text: str) -> dict:
     topics = [t for t in bullets(blocks.get("research", [])) + bullets(blocks.get("teach", []))
               if not t.startswith("Suchen Sie") and not t.startswith("Abschlussarbeiten")]
     topics = [re.split(r":\s", t, 1)[0].rstrip(":") for t in topics]  # "KI: Langtext" -> "KI"
-    pubs = [e for e in (parse_entry(l[2:]) for l in blocks.get("pubs", []) if l.startswith("* ")) if e]
+    pubs = [e for e in (parse_pub(f, d) for f, d in pub_entries(blocks.get("pubs", []))) if e]
     return {
         "people": [{"name": name, "role": ", ".join(roles), "faculty": faculty, "expertise": list(dict.fromkeys(topics))}],
         "publications": pubs, "projects": [], "cooperations": [],

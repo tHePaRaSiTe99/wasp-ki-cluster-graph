@@ -8,6 +8,7 @@ const COLORS = {
   member: token("--member", "#d1001f"),
   external: token("--external", "#9aa6b2"),
   project: token("--project", "#343a42"),
+  publication: token("--publication", "#b59cff"),
   edge: token("--edge", "#aab3bd"),
   edgeStrong: token("--edge-strong", "#59636e"),
   paper: token("--bg", "#f2f3f5"),  // gleich dem Hintergrund, damit Label-Hintergründe nicht auffallen
@@ -108,6 +109,9 @@ function workRow(item) {
   );
 }
 
+const isWork = (n) => n.data("type") === "project";  // Projekt- und Publikationsknoten haben type "project"
+const kindLabel = (kind) => (kind === "publication" ? "Publikation" : "Projekt");
+
 const workOfNode = (n) => {
   const d = n.data();
   return { title: d.label, url: d.url, year: d.year, venue: d.venue, kind: d.kind };
@@ -162,8 +166,17 @@ function buildStyle() {
       style: {
         "background-color": COLORS.project,
         shape: "round-rectangle",
-        width: "mapData(degree, 0, 12, 10, 22)",
-        height: "mapData(degree, 0, 12, 10, 22)",
+        width: "mapData(degree, 0, 12, 12, 24)",
+        height: "mapData(degree, 0, 12, 12, 24)",
+      },
+    },
+    {
+      selector: 'node[type="project"][kind="publication"]',
+      style: {
+        "background-color": COLORS.publication,
+        shape: "diamond",
+        width: "mapData(degree, 0, 12, 10, 20)",
+        height: "mapData(degree, 0, 12, 10, 20)",
       },
     },
     {
@@ -269,10 +282,11 @@ function runLayout() {
 // ---------------------------------------------------------------------------
 function computeVisibility() {
   const peopleView = state.view === "people";
+  const shownKind = state.view === "publications" ? "publication" : "project";
   cy.batch(() => {
     cy.nodes().forEach((n) => {
-      const isProject = n.data("type") === "project";
-      let hide = peopleView && isProject;
+      const isProject = n.data("type") === "project";  // Werk: Projekt ODER Publikation (siehe kind)
+      let hide = isProject && (peopleView || n.data("kind") !== shownKind);
       if (state.membersOnly && !isProject && !n.data("member")) hide = true;
       n.toggleClass("hidden", hide);
     });
@@ -302,7 +316,8 @@ function updateStats() {
   const persons = vis.filter((n) => n.data("type") === "person");
   $("stat-members").textContent = persons.filter((n) => n.data("member")).length;
   $("stat-externals").textContent = persons.filter((n) => !n.data("member")).length;
-  $("stat-projects").textContent = vis.filter((n) => n.data("type") === "project").length;
+  $("stat-projects").textContent = vis.filter((n) => isWork(n) && n.data("kind") === "project").length;
+  $("stat-publications").textContent = vis.filter((n) => isWork(n) && n.data("kind") === "publication").length;
   $("stat-edges").textContent = edges;
   $("stats").textContent = isolatedHidden ? `${isolatedHidden} Einzelne ausgeblendet` : "";
   setHint(nodes === 0 ? "Keine Verbindungen in dieser Ansicht." : "");
@@ -496,8 +511,10 @@ function reveal(node) {
       }
     },
     () => {
-      if (state.view === "people") {
-        state.view = "projects";
+      // Werk: in die passende Ansicht (Projekte bzw. Publikationen); Person ohne Kooperationskante: Projektansicht
+      const wanted = !isWork(node) ? "projects" : node.data("kind") === "publication" ? "publications" : "projects";
+      if (isWork(node) ? state.view !== wanted : state.view === "people") {
+        state.view = wanted;
         return true;
       }
     },
@@ -552,11 +569,12 @@ function showNodePanel(n) {
   const d = n.data();
   const hood = n.neighborhood("node").toArray().sort(byLabel);
   const people = hood.filter((x) => x.data("type") === "person");
-  const projects = hood.filter((x) => x.data("type") === "project");
+  const projects = hood.filter((x) => isWork(x) && x.data("kind") === "project");
+  const publications = hood.filter((x) => isWork(x) && x.data("kind") === "publication");
   const isPerson = d.type === "person";
   const meta = (isPerson
     ? [d.role, d.faculty]
-    : [d.kind === "publication" ? "Publikation" : "Projekt", d.year, d.venue]
+    : [kindLabel(d.kind), d.year, d.venue]
   ).filter(Boolean).join(" · ");
   const href = safeUrl(d.url);
 
@@ -568,12 +586,15 @@ function showNodePanel(n) {
     h("div", { class: "meta" }, meta),
     (d.expertise || []).map((e) => h("span", { class: "tag" }, e)),
     d.description ? h("p", {}, d.description) : null,
-    !isPerson && href ? h("p", {}, externalLink(href, "Zur Veröffentlichung ↗", "work-title")) : null,
+    !isPerson && href
+      ? h("p", {}, externalLink(href, d.kind === "publication" ? "Zur Veröffentlichung ↗" : "Zur Projektseite ↗", "work-title"))
+      : null,
     !isPerson && !href && d.kind === "publication"
       ? h("p", {}, externalLink(scholarUrl(d.label), "Auf Google Scholar suchen ↗", "work-search"))
       : null,
     isPerson ? linkList("Arbeitet zusammen mit", people) : linkList("Beteiligte", people),
-    isPerson ? linkList("Projekte / Publikationen", projects) : null
+    isPerson ? linkList("Projekte", projects) : null,
+    isPerson ? linkList("Publikationen", publications) : null
   );
   $("panel-content").replaceChildren(content);
   $("panel").classList.remove("hidden");
@@ -641,10 +662,10 @@ function setupSearch() {
     list.hidden = !q || matches.length === 0;
     setHint(q && !matches.length ? "Kein Treffer" : "");
     matches.slice(0, 8).forEach((n) => {
-      const kind = n.data("type") === "project" ? "Projekt" : n.data("member") ? "Mitglied" : "Extern";
+      const kind = isWork(n) ? kindLabel(n.data("kind")) : n.data("member") ? "Mitglied" : "Extern";
       const btn = h("button", { type: "button" }, [
         h("span", { class: n.hasClass("hidden") ? "r-dim" : "" }, n.data("label")),
-        h("span", { class: "r-kind" }, kind),
+        h("span", { class: n.data("kind") === "publication" && isWork(n) ? "r-kind pub" : "r-kind" }, kind),
       ]);
       btn.addEventListener("click", () => {
         reveal(n);

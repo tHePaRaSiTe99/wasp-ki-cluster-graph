@@ -25,6 +25,7 @@
       <div><b id="stat-members">–</b><span>Mitglieder</span></div>
       <div><b id="stat-externals">–</b><span>Externe</span></div>
       <div><b id="stat-projects">–</b><span>Projekte</span></div>
+      <div><b id="stat-publications">–</b><span>Publikationen</span></div>
       <div><b id="stat-edges">–</b><span>Verbindungen</span></div>
       <div class="note" id="stats"></div>
     </section>
@@ -32,7 +33,7 @@
     <section class="searchbar">
       <label class="sr" for="search">Suche</label>
       <span class="search-icon" aria-hidden="true">⌕</span>
-      <input id="search" type="search" placeholder="Person oder Projekt finden …" autocomplete="off" />
+      <input id="search" type="search" placeholder="Person, Projekt oder Publikation finden …" autocomplete="off" />
       <ul id="results" class="results" hidden></ul>
       <div class="hint" id="hint"></div>
     </section>
@@ -40,7 +41,8 @@
     <nav class="dock">
       <div class="views" id="view-seg" role="group" aria-label="Ansicht">
         <button class="view active" data-view="people"><strong>Personen-Netz</strong><span>Nur Menschen</span></button>
-        <button class="view" data-view="projects"><strong>Mit Projekten</strong><span>Projekte als Knoten</span></button>
+        <button class="view" data-view="projects"><strong>Projekte</strong><span>Forschungsprojekte als Knoten</span></button>
+        <button class="view" data-view="publications"><strong>Publikationen</strong><span>Veröffentlichungen als Knoten</span></button>
       </div>
       <div class="dock-sep"></div>
       <label class="toggle"><input type="checkbox" id="opt-members" /> Nur Mitglieder</label>
@@ -56,9 +58,10 @@
     <section class="legend">
       <div><span class="dot dot-member"></span> Cluster-Mitglied</div>
       <div><span class="dot dot-external"></span> Externe Person</div>
-      <div><span class="dot dot-project"></span> Projekt / Publikation</div>
+      <div><span class="dot dot-project"></span> Projekt</div>
+      <div><span class="dot dot-publication"></span> Publikation</div>
       <div><span class="line line-coop"></span> Zusammenarbeit</div>
-      <p class="legend-tip">Linie anklicken → gemeinsame Veröffentlichungen</p>
+      <p class="legend-tip">Linie anklicken → gemeinsame Projekte &amp; Veröffentlichungen</p>
     </section>
 
     <aside id="panel" class="panel hidden" aria-live="polite">
