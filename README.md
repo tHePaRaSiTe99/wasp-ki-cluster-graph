@@ -80,11 +80,32 @@ python src/updater.py             # Graph unter http://localhost:8000 anzeigen u
 Das trainierte Modell liegt unter `training/checkpoints/tagger.pt`. Fehlt es, läuft die Pipeline trotzdem, dann aber
 nur mit den modellfreien Teilen: Mitglieder, Namen und Projekte, ohne Publikationen.
 
+## Tests
+Die Tests in `tests/` prüfen alle Teile der Pipeline. Sie brauchen weder Netzzugang noch das Modell, weil Webseiten
+und Tagger simuliert werden, und sie verändern keine Dateien unter `data/`.
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m pytest
+```
+
+Abgedeckt sind:
+- das Zusammenführen von Namen und Werken
+- der Aufbau und Export des Graphen
+- die Extraktion mit und ohne Modell
+- das Crawlen mit Änderungserkennung
+- die Sicherheitsnetze der Pipeline
+- der Zeitplan des Hintergrunddienstes
+- die Gültigkeit der veröffentlichten `graph.json`
+
+GitHub Actions führt die Tests bei jedem Push und bei Pull Requests auf Python 3.12 und 3.13 aus (`.github/workflows/tests.yml`).
+
 ## Projektstruktur
 ```
 src/          Pipeline: crawl.py, extract.py, build_graph.py, pipeline.py, updater.py, state.py
 web/          statische Webseite (index.html, app.js, style.css) und data/graph.json
 training/     Tagger-Modell: Trainingsdaten, Training, Auswertung (siehe training/README_TRAINING.md)
+tests/        automatische Tests (pytest)
 data/         lokale Arbeitsdaten (Rohseiten, Extraktionen, Zustand). Nicht im Repository.
 .github/      GitHub-Actions-Workflows
 ```
