@@ -32,7 +32,10 @@ Der Tagger ist auf das TH-Layout spezialisiert; ändert die TH ihr Seitenformat,
 Projekte werden bewusst nicht ausgegeben (`INCLUDE_PROJECTS` in `src/extract.py`): die Personenseiten haben keinen Projekt-Abschnitt.
 
 ## Online-Version (GitHub Pages)
-`.github/workflows/pages.yml` veröffentlicht bei jedem Push auf `main`, der `web/` ändert, den Ordner `web/` als statische
-Seite. Weil das Modell nicht im Repo liegt, wird `web/data/graph.json` lokal erzeugt und mitcommittet:
-`python src/pipeline.py`, dann `git add web/data/graph.json && git commit -m "Graph aktualisiert" && git push`.
-Einmalig nötig: unter *Settings → Pages* als Quelle „GitHub Actions“ wählen.
+https://theparasite99.github.io/wasp-ki-cluster-graph/ wird von `.github/workflows/pages.yml` aktuell gehalten: Die Action
+crawlt täglich um 04:17 UTC (in Deutschland 05:17 bzw. 06:17 Uhr) und zusätzlich bei jedem Push auf `main`, der `src/`,
+`web/` oder das Modell ändert. Danach baut sie den Graphen neu und veröffentlicht `web/`. Von Hand startet man sie unter
+*Actions → Crawl and deploy website → Run workflow* (Häkchen „Alle Seiten neu extrahieren“ für einen kompletten Neulauf).
+Dafür liegt das Modell `training/checkpoints/tagger.pt` im Repo; nach neuem Training einfach diese Datei committen.
+Schlägt das Crawlen fehl, bleibt die bisherige Online-Version stehen. `web/data/graph.json` im Repo ist nur der Startwert
+und muss nicht mehr von Hand aktualisiert werden.

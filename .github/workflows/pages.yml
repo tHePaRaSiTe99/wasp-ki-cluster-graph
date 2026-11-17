@@ -1,16 +1,31 @@
-name: Deploy website to GitHub Pages
+name: Crawl and deploy website
 
-# Veröffentlicht den Ordner web/ (inkl. web/data/graph.json) als statische Seite.
-# graph.json wird lokal von src/pipeline.py erzeugt (das Tagger-Modell liegt nicht im Repo)
-# und muss committet werden, damit die Online-Version aktuell ist.
+# Crawlt täglich die THK-AI-Seiten, baut den Graphen neu und veröffentlicht web/ auf GitHub Pages.
+#
+# * Täglich um 04:17 UTC (geplant), bei Pushes auf main, die Code/Web/Modell ändern, und von Hand.
+# * data/ (Extraktionen, Seiten-Hashes) und die zuletzt gebaute graph.json werden im Actions-Cache
+#   gehalten. So werden nur geänderte Seiten neu extrahiert, und eine Seite, die heute nicht lädt,
+#   behält ihre alten Daten.
+# * Bei Pushes wird alles neu extrahiert (--force), weil sich der Extraktionscode geändert haben kann.
+# * Schlägt das Crawlen fehl, wird nichts veröffentlicht: Die bisherige Online-Version bleibt bestehen.
 
 on:
+  schedule:
+    - cron: "17 4 * * *"
   push:
     branches: [main]
     paths:
+      - "src/**"
       - "web/**"
+      - "training/tagger.py"
+      - "training/checkpoints/tagger.pt"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Alle Seiten neu extrahieren"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,20 +34,59 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # torch nur als CPU-Version: deutlich kleiner, die Extraktion braucht keine GPU
+      - name: Install dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install requests beautifulsoup4 markdownify networkx
+
+      - name: Restore crawl data
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data
+            web/data/graph.json
+          key: crawl-data-${{ github.run_id }}
+          restore-keys: crawl-data-
+
+      - name: Crawl, extract and build graph
+        run: python src/pipeline.py ${{ (github.event_name == 'push' || inputs.force) && '--force' || '' }}
+
+      - name: Save crawl data
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data
+            web/data/graph.json
+          key: crawl-data-${{ github.run_id }}
+
       - name: Check graph.json
-        run: python3 -c "import json; g=json.load(open('web/data/graph.json', encoding='utf-8')); print('graph.json ok')"
+        run: |
+          python - <<'EOF'
+          import json
+          g = json.load(open("web/data/graph.json", encoding="utf-8"))
+          members = sum(1 for n in g["nodes"] if n["data"].get("member"))
+          pubs = sum(1 for n in g["nodes"] if n["data"].get("kind") == "publication")
+          print(f"{len(g['nodes'])} Knoten, {len(g['edges'])} Kanten, {members} Mitglieder, {pubs} Publikationen")
+          assert members > 0, "keine Mitglieder im Graphen"
+          assert pubs > 0, "keine Publikationen im Graphen - Modell nicht geladen?"
+          EOF
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -42,6 +96,13 @@ jobs:
         with:
           path: web
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
